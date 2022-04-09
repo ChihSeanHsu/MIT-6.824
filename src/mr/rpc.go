@@ -47,7 +47,8 @@ type GetTaskReply struct {
 type TaskCompleteArgs struct {
 	NodeID string
 	TaskType
-	TaskID int
+	ID    int
+	Files []string
 }
 
 type TaskCompleteReply struct {

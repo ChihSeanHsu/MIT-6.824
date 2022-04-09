@@ -43,7 +43,8 @@ func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 func DoMap(mapf func(string, string) []KeyValue, task GetTaskReply, nodeID string) {
 	content, _ := readFile(task.Files[0])
 	kva := mapf(task.Files[0], string(content))
-	partitionArr := make([][]KeyValue, 0, task.ReduceCount)
+	partitionArr := make([][]KeyValue, task.ReduceCount)
+	var partitionFiles []string
 	for _, kv := range kva {
 		partition := ihash(kv.Key) % task.ReduceCount
 		partitionArr[partition] = append(partitionArr[partition], kv)
@@ -58,8 +59,14 @@ func DoMap(mapf func(string, string) []KeyValue, task GetTaskReply, nodeID strin
 		}
 		newFile := fmt.Sprintf("mr-%d-%d", task.ID, idx)
 		writeFile(newFile, jsonKV)
+		partitionFiles = append(partitionFiles, newFile)
 	}
-	CallTaskComplete(nodeID, task.TaskType, task.ID)
+	CallTaskComplete(TaskCompleteArgs{
+		NodeID:   nodeID,
+		TaskType: MapTask,
+		ID:       task.ID,
+		Files:    partitionFiles,
+	})
 }
 
 func DoReduce(reducef func(string, []string) string, task GetTaskReply, nodeID string) {
@@ -74,7 +81,6 @@ func DoReduce(reducef func(string, []string) string, task GetTaskReply, nodeID s
 		}
 		intermediates = append(intermediates, data...)
 	}
-
 	outputFilename := fmt.Sprintf("mr-out-%d", task.ID)
 	outputFile, _ := os.Create(outputFilename)
 	defer outputFile.Close()
@@ -83,7 +89,7 @@ func DoReduce(reducef func(string, []string) string, task GetTaskReply, nodeID s
 	left := 0
 	for left < len(intermediates) {
 		right := left + 1
-		for right < len(intermediates) && intermediates[left].Key == intermediates[left].Key {
+		for right < len(intermediates) && intermediates[left].Key == intermediates[right].Key {
 			right++
 		}
 		values := make([]string, 0, right)
@@ -96,7 +102,11 @@ func DoReduce(reducef func(string, []string) string, task GetTaskReply, nodeID s
 		fmt.Fprintf(outputFile, "%v %v\n", intermediates[left].Key, output)
 		left = right
 	}
-	CallTaskComplete(nodeID, task.TaskType, task.ID)
+	CallTaskComplete(TaskCompleteArgs{
+		NodeID:   nodeID,
+		TaskType: ReduceTask,
+		ID:       task.ID,
+	})
 }
 
 // Worker
@@ -107,6 +117,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	// TODO: need to check with another worker
 	pid := os.Getpid()
 	nodeID := fmt.Sprintf("%d-%s", pid, uuid.New().String())
+	fmt.Printf("Worker %s start to work \n", nodeID)
 	task := CallGetTask(nodeID)
 
 	// Your worker implementation here.
@@ -115,9 +126,13 @@ func Worker(mapf func(string, string) []KeyValue,
 		case WaitTask:
 			fmt.Println("Wait for others")
 		case MapTask:
+			fmt.Printf("Get map task %d files %v \n", task.ID, task.Files)
 			DoMap(mapf, task, nodeID)
+			fmt.Printf("Done map %d files %v \n", task.ID, task.Files)
 		case ReduceTask:
+			fmt.Printf("Get reduce task %d files %v \n", task.ID, task.Files)
 			DoReduce(reducef, task, nodeID)
+			fmt.Printf("Done reduce task %d files %v \n", task.ID, task.Files)
 		}
 		time.Sleep(time.Second)
 		task = CallGetTask(nodeID)
@@ -160,12 +175,7 @@ func CallGetTask(nodeID string) GetTaskReply {
 	return reply
 }
 
-func CallTaskComplete(nodeID string, taskType TaskType, taskID int) {
-	args := TaskCompleteArgs{
-		NodeID:   nodeID,
-		TaskType: taskType,
-		TaskID:   taskID,
-	}
+func CallTaskComplete(args TaskCompleteArgs) {
 	reply := TaskCompleteReply{}
 	call("Coordinator.TaskComplete", &args, &reply)
 }
