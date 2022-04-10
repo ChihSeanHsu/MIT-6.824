@@ -3,15 +3,13 @@ package mr
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"hash/fnv"
 	"io/ioutil"
 	"log"
 	"net/rpc"
 	"os"
 	"sort"
-	"time"
-
-	"github.com/google/uuid"
 )
 
 // KeyValue
@@ -44,7 +42,7 @@ func DoMap(mapf func(string, string) []KeyValue, task GetTaskReply, nodeID strin
 	content, _ := readFile(task.Files[0])
 	kva := mapf(task.Files[0], string(content))
 	partitionArr := make([][]KeyValue, task.ReduceCount)
-	var partitionFiles []string
+	partitionFiles := make([]string, task.ReduceCount)
 	for _, kv := range kva {
 		partition := ihash(kv.Key) % task.ReduceCount
 		partitionArr[partition] = append(partitionArr[partition], kv)
@@ -59,7 +57,7 @@ func DoMap(mapf func(string, string) []KeyValue, task GetTaskReply, nodeID strin
 		}
 		newFile := fmt.Sprintf("mr-%d-%d", task.ID, idx)
 		writeFile(newFile, jsonKV)
-		partitionFiles = append(partitionFiles, newFile)
+		partitionFiles[idx] = newFile
 	}
 	CallTaskComplete(TaskCompleteArgs{
 		NodeID:   nodeID,
@@ -121,10 +119,8 @@ func Worker(mapf func(string, string) []KeyValue,
 	task := CallGetTask(nodeID)
 
 	// Your worker implementation here.
-	for task.TaskType != NoTask {
+	for {
 		switch task.TaskType {
-		case WaitTask:
-			fmt.Println("Wait for others")
 		case MapTask:
 			fmt.Printf("Get map task %d files %v \n", task.ID, task.Files)
 			DoMap(mapf, task, nodeID)
@@ -134,7 +130,6 @@ func Worker(mapf func(string, string) []KeyValue,
 			DoReduce(reducef, task, nodeID)
 			fmt.Printf("Done reduce task %d files %v \n", task.ID, task.Files)
 		}
-		time.Sleep(time.Second)
 		task = CallGetTask(nodeID)
 	}
 	fmt.Println("Done")
